@@ -13,9 +13,13 @@ from __future__ import annotations
 import io
 import json
 import streamlit as st
-from google import genai
-from google.genai import types
 from PIL import Image
+
+# 주의: `from google import genai`를 파일 최상단에서 하지 않습니다.
+# 이 패키지 임포트가 배포 환경에서 실패하면(설치 누락/네임스페이스 충돌 등)
+# 이 모듈 전체가 임포트 실패하고, 결과적으로 app.py의 최상단 임포트까지 연쇄적으로
+# 깨지면서 이미지 리사이즈/포트폴리오 등 Gemini와 무관한 기능까지 전부 죽어버립니다.
+# 그래서 실제로 AI 기능을 호출하는 시점에만 아래 _import_genai()에서 지연 임포트합니다.
 
 # ------------------------------------------------------------------
 # 모델 폴백 체인 (2026-08 기준, 필요 시 이 리스트만 수정하면 전체 반영됨)
@@ -32,6 +36,26 @@ IMAGE_MODEL_CHAIN = [
 ]
 
 
+def _import_genai():
+    """
+    google-genai 패키지를 지연 임포트합니다.
+    실패 시 원인을 그대로 노출하는 RuntimeError를 발생시켜, Streamlit Cloud의
+    '리다크션된' 일반 에러 메시지 대신 실제 원인을 화면에서 바로 볼 수 있게 합니다.
+    """
+    try:
+        from google import genai
+        from google.genai import types
+        return genai, types
+    except ImportError as e:
+        raise RuntimeError(
+            "google-genai 패키지를 불러오지 못했습니다. "
+            "requirements.txt에 'google-genai'가 정확히 포함되어 있는지, "
+            "그리고 Streamlit Cloud에서 'Manage app > Reboot app'으로 "
+            "패키지를 재설치했는지 확인해주세요. "
+            f"(원본 오류: {type(e).__name__}: {e})"
+        ) from e
+
+
 def _get_api_key() -> str:
     """secrets.toml 또는 환경변수에서 API 키를 가져옵니다."""
     key = st.secrets.get("GEMINI_API_KEY", None)
@@ -44,9 +68,19 @@ def _get_api_key() -> str:
     return key
 
 
+def check_api_key_configured() -> bool:
+    """
+    사이드바 등에서 '연결 상태'를 표시하기 위한 용도.
+    google-genai 패키지를 불러오지 않고 secrets 존재 여부만 확인하므로
+    항상 가볍고 안전하게 호출할 수 있습니다.
+    """
+    return bool(st.secrets.get("GEMINI_API_KEY", None))
+
+
 @st.cache_resource(show_spinner=False)
-def get_client() -> "genai.Client":
+def get_client():
     """genai.Client는 매 요청마다 새로 만들 필요가 없으므로 캐싱합니다."""
+    genai, _types = _import_genai()
     return genai.Client(api_key=_get_api_key())
 
 
@@ -61,6 +95,7 @@ def generate_text(
     response_json=True이면 모델에게 JSON만 출력하도록 강제합니다.
     """
     client = get_client()
+    _genai, types = _import_genai()
     last_error = None
 
     config_kwargs = {"temperature": temperature}
@@ -111,6 +146,7 @@ def generate_image(
     reference_images: 이미지 편집/합성 시 참조 이미지 목록 (선택)
     """
     client = get_client()
+    _genai, types = _import_genai()
     last_error = None
 
     contents = []
