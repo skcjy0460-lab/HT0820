@@ -8,6 +8,8 @@ Gemini API 클라이언트 래퍼
     이미지 생성은 반드시 별도의 "-image" 계열 모델을 사용해야 합니다.
 """
 
+from __future__ import annotations
+
 import io
 import json
 import streamlit as st
